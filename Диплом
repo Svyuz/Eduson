@@ -1,0 +1,4 @@
+Проверка пользователей на уникальность
+select 	count(*) all_id,
+		count(distinct user_id) as all_unique_id
+from	users u
