@@ -1,4 +1,96 @@
-Проверка пользователей на уникальность
-select 	count(*) all_id,
-		count(distinct user_id) as all_unique_id
-from	users u
+1) Какое количество менторов и менти взаимодействуют каждый месяц на нашей платформе? 
+Как меняется этот показатель из месяца в месяц?
+
+1. Проверим таблицу users (возможные роли)
+SELECT DISTINCT role FROM users;
+
+2. Посмотрим структуру sessions/weekly_sessions:
+SELECT column_name, data_type 
+FROM information_schema.columns 
+WHERE table_name IN ('sessions', 'weekly_sessions');
+
+3. Запрос для анализа взаимодействий менторов и менти по месяцам:
+SELECT 
+    EXTRACT(YEAR FROM session_date_time) AS year,
+    EXTRACT(MONTH FROM session_date_time) AS month,
+    COUNT(DISTINCT mentor_id) AS unique_mentors,
+    COUNT(DISTINCT mentee_id) AS unique_mentees,
+    COUNT(*) AS total_sessions
+FROM sessions
+WHERE session_status = 'finished'
+GROUP BY 
+    EXTRACT(YEAR FROM session_date_time),
+    EXTRACT(MONTH FROM session_date_time)
+ORDER BY year, month;
+
+4. Расчета процентного роста:
+WITH monthly_data AS (
+    SELECT 
+        EXTRACT(YEAR FROM session_date_time) AS year,
+        EXTRACT(MONTH FROM session_date_time) AS month,
+        COUNT(DISTINCT mentor_id) AS mentors,
+        COUNT(DISTINCT mentee_id) AS mentees
+    FROM sessions
+    WHERE session_status = 'finished'
+    GROUP BY 
+        EXTRACT(YEAR FROM session_date_time),
+        EXTRACT(MONTH FROM session_date_time)
+)
+SELECT 
+    year,
+    month,
+    mentors,
+    mentees,
+    mentors - LAG(mentors) OVER (ORDER BY year, month) AS mentor_change,
+    mentees - LAG(mentees) OVER (ORDER BY year, month) AS mentee_change,
+    CASE 
+        WHEN LAG(mentors) OVER (ORDER BY year, month) > 0 
+        THEN ROUND((mentors - LAG(mentors) OVER (ORDER BY year, month)) * 100.0 / 
+            LAG(mentors) OVER (ORDER BY year, month), 2)
+        ELSE NULL
+    END AS mentor_growth_percent,
+    CASE 
+        WHEN LAG(mentees) OVER (ORDER BY year, month) > 0 
+        THEN ROUND((mentees - LAG(mentees) OVER (ORDER BY year, month)) * 100.0 / 
+            LAG(mentees) OVER (ORDER BY year, month), 2)
+        ELSE NULL
+    END AS mentee_growth_percent
+FROM monthly_data
+ORDER BY year, month;
+
+5. Объединение месяца и года в одной колонке:
+WITH monthly_data AS (
+    SELECT 
+        EXTRACT(YEAR FROM session_date_time) AS year,
+        EXTRACT(MONTH FROM session_date_time) AS month,
+        COUNT(DISTINCT mentor_id) AS mentors,
+        COUNT(DISTINCT mentee_id) AS mentees,
+        COUNT(*) AS total_sessions
+    FROM sessions
+    WHERE session_status = 'finished'
+    GROUP BY 
+        EXTRACT(YEAR FROM session_date_time),
+        EXTRACT(MONTH FROM session_date_time)
+)
+SELECT 
+    year || '-' || LPAD(month::text, 2, '0') AS year_month,
+    mentors,
+    mentees,
+    total_sessions,
+    mentors - LAG(mentors) OVER (ORDER BY year, month) AS mentor_change,
+    mentees - LAG(mentees) OVER (ORDER BY year, month) AS mentee_change,
+    CASE 
+        WHEN LAG(mentors) OVER (ORDER BY year, month) > 0 
+        THEN ROUND((mentors - LAG(mentors) OVER (ORDER BY year, month)) * 100.0 / 
+            LAG(mentors) OVER (ORDER BY year, month), 2)
+        ELSE NULL
+    END AS mentor_growth_percent,
+    CASE 
+        WHEN LAG(mentees) OVER (ORDER BY year, month) > 0 
+        THEN ROUND((mentees - LAG(mentees) OVER (ORDER BY year, month)) * 100.0 / 
+            LAG(mentees) OVER (ORDER BY year, month), 2)
+        ELSE NULL
+    END AS mentee_growth_percent,
+    ROUND(mentees * 1.0 / NULLIF(mentors, 0), 2) AS mentees_per_mentor
+FROM monthly_data
+ORDER BY year, month
