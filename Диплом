@@ -94,3 +94,124 @@ SELECT
     ROUND(mentees * 1.0 / NULLIF(mentors, 0), 2) AS mentees_per_mentor
 FROM monthly_data
 ORDER BY year, month
+
+2) Сколько на платформе менторов и менти, которые  еще не приняли участие ни в одной встрече?
+1. Кол-во неактивных менти:
+SELECT 
+    'Неактивные менти' AS user_type,
+    COUNT(*) AS count
+FROM 
+    users
+WHERE 
+    role = 'mentee'
+    AND user_id NOT IN (
+        SELECT DISTINCT mentee_id 
+        FROM sessions
+    )
+
+2. Кол-во неактивных менторов:
+SELECT 
+    'Неактивные менторы' AS user_type,
+    COUNT(*) AS count
+FROM 
+    users
+WHERE 
+    role = 'mentor'
+    AND user_id NOT IN (
+        SELECT DISTINCT mentor_id 
+        FROM sessions
+    )
+
+3) Сколько у каждого ментора в среднем успешных сессий в неделю   по месяцам?
+
+1. Проверка базового запроса для weekly_stats:
+SELECT
+    mentor_id,
+    DATE_TRUNC('week', session_date_time) AS week_start,
+    COUNT(*) AS sessions_count
+FROM sessions
+WHERE session_status = 'finished'
+GROUP BY mentor_id, DATE_TRUNC('week', session_date_time);
+
+2. Месячная агрегация:
+WITH weekly_stats AS (
+    SELECT
+        mentor_id,
+        DATE_TRUNC('week', session_date_time) AS week_start,
+        COUNT(*) AS sessions_count
+    FROM sessions
+    WHERE session_status = 'finished'
+    GROUP BY mentor_id, DATE_TRUNC('week', session_date_time)
+)
+SELECT
+    mentor_id,
+    DATE_TRUNC('month', week_start) AS month_start,
+    AVG(sessions_count) AS avg_sessions_per_week
+FROM weekly_stats
+GROUP BY mentor_id, DATE_TRUNC('month', week_start);
+
+3. Группировка по месяцам:
+WITH weekly_stats AS (
+    SELECT
+        mentor_id,
+        DATE_TRUNC('week', session_date_time) AS week_start,
+        COUNT(*) AS sessions_count
+    FROM sessions
+    WHERE session_status = 'finished'
+    GROUP BY mentor_id, DATE_TRUNC('week', session_date_time)
+),
+monthly_stats AS (
+    SELECT
+        mentor_id,
+        DATE_TRUNC('month', week_start) AS month_start,
+        AVG(sessions_count) AS avg_sessions_per_week
+    FROM weekly_stats
+    GROUP BY mentor_id, DATE_TRUNC('month', week_start)
+)
+SELECT
+    TO_CHAR(month_start, 'YYYY-MM') AS month,
+    COUNT(mentor_id) AS active_mentors,
+    ROUND(AVG(avg_sessions_per_week), 2) AS avg_sessions_per_mentor
+FROM monthly_stats
+GROUP BY month_start
+ORDER BY month_start
+
+4) Определите ТОП-5 менторов с самым большим количеством сессий за последний полный месяц. Есть ли между ними что-то общее?
+WITH last_month AS (
+    SELECT 
+        DATE_TRUNC('month', MAX(session_date_time)) AS month_start
+    FROM 
+        sessions
+    WHERE 
+        session_date_time < DATE_TRUNC('month', CURRENT_DATE)
+),
+top_mentors AS (
+    SELECT 
+        s.mentor_id,
+        COUNT(*) AS sessions_count
+    FROM 
+        sessions s,
+        last_month
+    WHERE 
+        DATE_TRUNC('month', s.session_date_time) = last_month.month_start
+        AND s.session_status = 'finished'
+    GROUP BY 
+        s.mentor_id
+    ORDER BY 
+        sessions_count DESC
+    LIMIT 5
+)
+SELECT 
+    tm.mentor_id,
+    u.role,
+    tm.sessions_count,
+    u.reg_date AS registration_date,
+    r.name AS region_name
+FROM 
+    top_mentors tm
+JOIN 
+    users u ON tm.mentor_id = u.user_id
+LEFT JOIN 
+    region r ON u.region_id = r.id
+ORDER BY 
+    tm.sessions_count DESC
